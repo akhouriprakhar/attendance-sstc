@@ -1,10 +1,12 @@
-import React, { useState, useEffect } from 'react';
-import { AppConfig, Student } from '../../types';
+import React, { useState, useEffect, useMemo } from 'react';
+import { AppConfig, Student, TemplateConfig, DEFAULT_TEMPLATE_CONFIG } from '../../types';
 import { GENERIC_SETUP_PROMPT, validateClassSetupJson } from '../../utils/setupValidator';
+import { generateReportText } from '../../utils/textFormatter';
 
 interface SettingsModalProps {
   isOpen: boolean;
   config: AppConfig;
+  students?: Student[];
   onClose: () => void;
   onSaveConfig: (newConfig: AppConfig) => void;
   onSaveStudents: (newStudents: Student[]) => void;
@@ -16,15 +18,16 @@ interface SettingsModalProps {
   onResetClass?: () => void;
 }
 
-const PROMPT_TIMETABLE = `I am uploading an image/PDF/screenshot of a class timetable schedule. Please extract all lectures from Monday to Saturday and output ONLY a valid JSON object matching this exact schema with no extra conversational text or markdown codeblocks:
+const PROMPT_TIMETABLE = `I am uploading an image/PDF/screenshot of a class timetable schedule. Please extract all lectures and practicals from Monday to Saturday and output ONLY a valid JSON object matching this exact schema with clean, readable subject names (e.g. "DS", "Blockchain", "TOC", "CN", "IoT", "Minor Project") and distinct lab titles (e.g. "DS Lab", "IoT Lab", "CN Lab") with no raw course codes or elective prefixes:
 
 {
   "Monday": [
-    { "t": "10:00-10:50", "s": "MATH" },
-    { "t": "10:50-11:40", "s": "PHY" }
+    { "t": "10:00-10:50", "s": "DS" },
+    { "t": "10:50-11:40", "s": "TOC" },
+    { "t": "11:40-13:20", "s": "DS Lab" }
   ],
   "Tuesday": [
-    { "t": "10:00-10:50", "s": "CHEM" }
+    { "t": "10:00-10:50", "s": "Blockchain" }
   ]
 }`;
 
@@ -36,17 +39,19 @@ const PROMPT_ROSTER = `I am uploading an image/PDF/screenshot of a student class
   { "roll": 3, "name": "Charlie Brown" }
 ]`;
 
-const PROMPT_TEACHERS = `I am uploading an image/PDF/screenshot of subject faculty assignments. Please extract all subject codes, subject full names, and faculty/professor names, and output ONLY a valid JSON object matching this exact schema with no extra conversational text or markdown codeblocks:
+const PROMPT_TEACHERS = `I am uploading an image/PDF/screenshot of subject faculty assignments. Please extract all subjects and faculty/professor names, and output ONLY a valid JSON object matching this exact schema with clean, readable subject and lab names (e.g. "DS", "DS Lab", "Blockchain", "TOC", "CN", "CN Lab", "IoT", "IoT Lab", "Minor Project") with no raw course codes or elective prefixes:
 
 {
-  "MATH": { "name": "Mathematics", "faculty": "Dr. Smith" },
-  "PHY": { "name": "Physics", "faculty": "Prof. Davis" },
-  "CHEM": { "name": "Chemistry", "faculty": "Dr. Wilson" }
+  "DS": { "name": "Data Science", "faculty": "Dr. Smith" },
+  "DS Lab": { "name": "Data Science Lab", "faculty": "Dr. Smith" },
+  "TOC": { "name": "Theory of Computation", "faculty": "Prof. Davis" },
+  "Blockchain": { "name": "Blockchain", "faculty": "Dr. Wilson" }
 }`;
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
   isOpen,
   config,
+  students = [],
   onClose,
   onSaveConfig,
   onSaveStudents,
@@ -57,8 +62,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onDownloadBackup,
   onResetClass
 }) => {
-  const [activeTab, setActiveTab] = useState<'smart' | 'manual' | 'backup'>('smart');
+  const [activeTab, setActiveTab] = useState<'template' | 'smart' | 'manual' | 'backup'>('template');
   const [jsonText, setJsonText] = useState('');
+
+  // Template Config State
+  const [templateState, setTemplateState] = useState<TemplateConfig>(() => {
+    return config.templateConfig ? { ...DEFAULT_TEMPLATE_CONFIG, ...config.templateConfig } : DEFAULT_TEMPLATE_CONFIG;
+  });
+  const [previewMode, setPreviewMode] = useState<'absentees' | 'presentees'>('absentees');
+  const [templateSavedToast, setTemplateSavedToast] = useState(false);
 
   // Smart Import Textarea states
   const [fullSetupInput, setFullSetupInput] = useState('');
@@ -73,8 +85,54 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   useEffect(() => {
     if (isOpen) {
       setJsonText(JSON.stringify(config, null, 2));
+      setTemplateState(config.templateConfig ? { ...DEFAULT_TEMPLATE_CONFIG, ...config.templateConfig } : DEFAULT_TEMPLATE_CONFIG);
     }
   }, [config, isOpen]);
+
+  // Sample or actual students for live template preview
+  const previewStudents = useMemo(() => {
+    if (students && students.length > 0) {
+      return students;
+    }
+    return [
+      { roll: 1, name: 'Alex Johnson', p: true },
+      { roll: 2, name: 'Bethany Smith', p: true },
+      { roll: 4, name: 'Chris Evans', p: false },
+      { roll: 12, name: 'David Miller', p: false },
+      { roll: 38, name: 'Emma Watson', p: false },
+    ];
+  }, [students]);
+
+  const livePreviewText = useMemo(() => {
+    return generateReportText({
+      students: previewStudents,
+      config,
+      outputMode: previewMode,
+      startLec: '2',
+      templateConfig: templateState
+    });
+  }, [previewStudents, config, previewMode, templateState]);
+
+  const handleSaveTemplate = () => {
+    onSaveConfig({
+      ...config,
+      templateConfig: templateState
+    });
+    setTemplateSavedToast(true);
+    if (navigator.vibrate) navigator.vibrate(10);
+    setTimeout(() => setTemplateSavedToast(false), 2000);
+  };
+
+  const handleResetTemplate = () => {
+    setTemplateState(DEFAULT_TEMPLATE_CONFIG);
+    onSaveConfig({
+      ...config,
+      templateConfig: DEFAULT_TEMPLATE_CONFIG
+    });
+    setTemplateSavedToast(true);
+    if (navigator.vibrate) navigator.vibrate(10);
+    setTimeout(() => setTemplateSavedToast(false), 2000);
+  };
 
   if (!isOpen) return null;
 
@@ -198,6 +256,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           <button
             type="button"
             className="btn secondary"
+            onClick={() => setActiveTab('template')}
+            style={{ opacity: activeTab === 'template' ? 1 : 0.6, fontSize: '0.8rem', whiteSpace: 'nowrap' }}
+            aria-selected={activeTab === 'template'}
+          >
+            💬 WhatsApp Template
+          </button>
+          <button
+            type="button"
+            className="btn secondary"
             onClick={() => setActiveTab('smart')}
             style={{ opacity: activeTab === 'smart' ? 1 : 0.6, fontSize: '0.8rem', whiteSpace: 'nowrap' }}
             aria-selected={activeTab === 'smart'}
@@ -221,6 +288,309 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             Offline Backup & Restore
           </button>
         </div>
+
+        {/* Tab 0: WhatsApp Template Customization & Live Preview */}
+        {activeTab === 'template' && (
+          <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '1rem', paddingRight: '4px' }}>
+            {templateSavedToast && (
+              <div style={{
+                background: 'rgba(48, 209, 88, 0.15)',
+                border: '1px solid var(--accent-green)',
+                color: 'var(--accent-green)',
+                padding: '0.5rem 0.75rem',
+                borderRadius: '8px',
+                fontSize: '0.82rem',
+                fontWeight: 600,
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.4rem'
+              }}>
+                ✓ Template settings saved and applied to live reports!
+              </div>
+            )}
+
+            {/* Live Preview Card */}
+            <div style={{
+              background: '#0c1015',
+              border: '1px solid #1f2c34',
+              borderRadius: '10px',
+              padding: '0.85rem 1rem'
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                  <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#25D366', display: 'inline-block' }}></span>
+                  <span style={{ fontSize: '0.8rem', fontWeight: 700, color: '#e9edef', letterSpacing: '0.3px' }}>
+                    Live WhatsApp Message Preview
+                  </span>
+                </div>
+                <div style={{ display: 'flex', gap: '0.3rem' }}>
+                  <button
+                    type="button"
+                    className="btn secondary"
+                    style={{
+                      fontSize: '0.7rem',
+                      padding: '0.2rem 0.5rem',
+                      minHeight: '28px',
+                      background: previewMode === 'absentees' ? '#25D366' : 'transparent',
+                      color: previewMode === 'absentees' ? '#000' : 'var(--text-secondary)',
+                      borderColor: previewMode === 'absentees' ? '#25D366' : '#333'
+                    }}
+                    onClick={() => setPreviewMode('absentees')}
+                  >
+                    Absentees
+                  </button>
+                  <button
+                    type="button"
+                    className="btn secondary"
+                    style={{
+                      fontSize: '0.7rem',
+                      padding: '0.2rem 0.5rem',
+                      minHeight: '28px',
+                      background: previewMode === 'presentees' ? '#25D366' : 'transparent',
+                      color: previewMode === 'presentees' ? '#000' : 'var(--text-secondary)',
+                      borderColor: previewMode === 'presentees' ? '#25D366' : '#333'
+                    }}
+                    onClick={() => setPreviewMode('presentees')}
+                  >
+                    Presentees
+                  </button>
+                </div>
+              </div>
+
+              <div style={{
+                background: '#05070a',
+                border: '1px solid #182229',
+                borderRadius: '8px',
+                padding: '0.75rem',
+                fontFamily: 'var(--font-mono)',
+                fontSize: '0.8rem',
+                lineHeight: 1.6,
+                color: '#d1d7db',
+                whiteSpace: 'pre-wrap',
+                wordBreak: 'break-word',
+                userSelect: 'text'
+              }}>
+                {livePreviewText}
+              </div>
+            </div>
+
+            {/* Template Settings Controls */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+              
+              {/* Group 1: Header */}
+              <div style={{ background: '#161616', border: '1px solid #2a2a2a', padding: '0.85rem 1rem', borderRadius: '8px' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem' }}>
+                  <input
+                    type="checkbox"
+                    checked={templateState.includeHeader}
+                    onChange={e => setTemplateState(prev => ({ ...prev, includeHeader: e.target.checked }))}
+                    style={{ width: '16px', height: '16px', minHeight: 'auto', accentColor: 'var(--accent-red)' }}
+                  />
+                  Include Title / Header Line
+                </label>
+                {templateState.includeHeader && (
+                  <div style={{ marginTop: '0.5rem', paddingLeft: '1.6rem' }}>
+                    <input
+                      type="text"
+                      placeholder={`Custom Header (e.g. ${config.semesterName || 'CSE-5A'} Attendance)`}
+                      value={templateState.customHeader}
+                      onChange={e => setTemplateState(prev => ({ ...prev, customHeader: e.target.value }))}
+                      style={{ fontSize: '0.8rem', padding: '0.4rem 0.6rem', minHeight: '34px' }}
+                    />
+                    <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', display: 'block', marginTop: '3px' }}>
+                      Leave empty to auto-use semester name (e.g. &quot;{config.semesterName || 'Class'} Attendance&quot;)
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              {/* Group 2: Date & Day */}
+              <div style={{ background: '#161616', border: '1px solid #2a2a2a', padding: '0.85rem 1rem', borderRadius: '8px' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem' }}>
+                  <input
+                    type="checkbox"
+                    checked={templateState.includeDate}
+                    onChange={e => setTemplateState(prev => ({ ...prev, includeDate: e.target.checked }))}
+                    style={{ width: '16px', height: '16px', minHeight: 'auto', accentColor: 'var(--accent-red)' }}
+                  />
+                  Include Date & Day
+                </label>
+                {templateState.includeDate && (
+                  <div style={{ marginTop: '0.5rem', paddingLeft: '1.6rem', display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.8rem', color: 'var(--text-secondary)', cursor: 'pointer' }}>
+                      <input
+                        type="radio"
+                        name="dateFormat"
+                        value="dayFirst"
+                        checked={templateState.dateFormat === 'dayFirst'}
+                        onChange={() => setTemplateState(prev => ({ ...prev, dateFormat: 'dayFirst' }))}
+                        style={{ width: '14px', height: '14px', minHeight: 'auto', accentColor: 'var(--accent-red)' }}
+                      />
+                      Day First (Friday: 29/08/2026)
+                    </label>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.8rem', color: 'var(--text-secondary)', cursor: 'pointer' }}>
+                      <input
+                        type="radio"
+                        name="dateFormat"
+                        value="dateFirst"
+                        checked={templateState.dateFormat === 'dateFirst'}
+                        onChange={() => setTemplateState(prev => ({ ...prev, dateFormat: 'dateFirst' }))}
+                        style={{ width: '14px', height: '14px', minHeight: 'auto', accentColor: 'var(--accent-red)' }}
+                      />
+                      Date First (29/08/2026 (Friday))
+                    </label>
+                  </div>
+                )}
+              </div>
+
+              {/* Group 3: Lecture & Subject Inclusions */}
+              <div style={{ background: '#161616', border: '1px solid #2a2a2a', padding: '0.85rem 1rem', borderRadius: '8px', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                <span style={{ fontSize: '0.74rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px', fontFamily: 'var(--font-mono)', fontWeight: 600 }}>
+                  Content Inclusions
+                </span>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', cursor: 'pointer', fontSize: '0.82rem' }}>
+                  <input
+                    type="checkbox"
+                    checked={templateState.includeLecture}
+                    onChange={e => setTemplateState(prev => ({ ...prev, includeLecture: e.target.checked }))}
+                    style={{ width: '16px', height: '16px', minHeight: 'auto', accentColor: 'var(--accent-red)' }}
+                  />
+                  Include Lecture Slot Number (e.g. &quot;Lecture - 2&quot;)
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', cursor: 'pointer', fontSize: '0.82rem' }}>
+                  <input
+                    type="checkbox"
+                    checked={templateState.includeSubject}
+                    onChange={e => setTemplateState(prev => ({ ...prev, includeSubject: e.target.checked }))}
+                    style={{ width: '16px', height: '16px', minHeight: 'auto', accentColor: 'var(--accent-red)' }}
+                  />
+                  Include Subject Name / Code (from timetable schedule)
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', cursor: 'pointer', fontSize: '0.82rem', paddingLeft: templateState.includeSubject ? '1.6rem' : '0' }}>
+                  <input
+                    type="checkbox"
+                    disabled={!templateState.includeSubject}
+                    checked={templateState.includeFaculty}
+                    onChange={e => setTemplateState(prev => ({ ...prev, includeFaculty: e.target.checked }))}
+                    style={{ width: '16px', height: '16px', minHeight: 'auto', accentColor: 'var(--accent-red)' }}
+                  />
+                  Include Faculty / Professor Name (e.g. &quot;DBMS (Prof. Sharma)&quot;)
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', cursor: 'pointer', fontSize: '0.82rem' }}>
+                  <input
+                    type="checkbox"
+                    checked={templateState.includeStats}
+                    onChange={e => setTemplateState(prev => ({ ...prev, includeStats: e.target.checked }))}
+                    style={{ width: '16px', height: '16px', minHeight: 'auto', accentColor: 'var(--accent-red)' }}
+                  />
+                  Include Class Stats Summary (Total: 60 | Present: 55 | Absent: 5)
+                </label>
+              </div>
+
+              {/* Group 4: WhatsApp Formatting & Delimiter */}
+              <div style={{ background: '#161616', border: '1px solid #2a2a2a', padding: '0.85rem 1rem', borderRadius: '8px', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                <span style={{ fontSize: '0.74rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px', fontFamily: 'var(--font-mono)', fontWeight: 600 }}>
+                  Formatting & Delimiters
+                </span>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', cursor: 'pointer', fontSize: '0.82rem' }}>
+                  <input
+                    type="checkbox"
+                    checked={templateState.useBoldTags}
+                    onChange={e => setTemplateState(prev => ({ ...prev, useBoldTags: e.target.checked }))}
+                    style={{ width: '16px', height: '16px', minHeight: 'auto', accentColor: 'var(--accent-red)' }}
+                  />
+                  WhatsApp Bold Tags (*text* for clear emphasis)
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', cursor: 'pointer', fontSize: '0.82rem' }}>
+                  <input
+                    type="checkbox"
+                    checked={templateState.useEmojis}
+                    onChange={e => setTemplateState(prev => ({ ...prev, useEmojis: e.target.checked }))}
+                    style={{ width: '16px', height: '16px', minHeight: 'auto', accentColor: 'var(--accent-red)' }}
+                  />
+                  Visual Emojis (📅, ⏰, 📚, 📊, ❌, ✅)
+                </label>
+
+                <div style={{ marginTop: '0.35rem' }}>
+                  <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', display: 'block', marginBottom: '0.35rem' }}>
+                    Roll Numbers Delimiter:
+                  </span>
+                  <div style={{ display: 'flex', gap: '0.6rem', flexWrap: 'wrap' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.8rem', color: 'var(--text-primary)', cursor: 'pointer' }}>
+                      <input
+                        type="radio"
+                        name="rollDelimiter"
+                        value="comma"
+                        checked={templateState.rollDelimiter === 'comma'}
+                        onChange={() => setTemplateState(prev => ({ ...prev, rollDelimiter: 'comma' }))}
+                        style={{ width: '14px', height: '14px', minHeight: 'auto', accentColor: 'var(--accent-red)' }}
+                      />
+                      Comma (4, 12, 38)
+                    </label>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.8rem', color: 'var(--text-primary)', cursor: 'pointer' }}>
+                      <input
+                        type="radio"
+                        name="rollDelimiter"
+                        value="space"
+                        checked={templateState.rollDelimiter === 'space'}
+                        onChange={() => setTemplateState(prev => ({ ...prev, rollDelimiter: 'space' }))}
+                        style={{ width: '14px', height: '14px', minHeight: 'auto', accentColor: 'var(--accent-red)' }}
+                      />
+                      Space (4 12 38)
+                    </label>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.8rem', color: 'var(--text-primary)', cursor: 'pointer' }}>
+                      <input
+                        type="radio"
+                        name="rollDelimiter"
+                        value="newline"
+                        checked={templateState.rollDelimiter === 'newline'}
+                        onChange={() => setTemplateState(prev => ({ ...prev, rollDelimiter: 'newline' }))}
+                        style={{ width: '14px', height: '14px', minHeight: 'auto', accentColor: 'var(--accent-red)' }}
+                      />
+                      New Line (Vertical list)
+                    </label>
+                  </div>
+                </div>
+              </div>
+
+              {/* Group 5: Custom Footer */}
+              <div style={{ background: '#161616', border: '1px solid #2a2a2a', padding: '0.85rem 1rem', borderRadius: '8px' }}>
+                <span style={{ fontSize: '0.74rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px', fontFamily: 'var(--font-mono)', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>
+                  Custom Footer / Signature (Optional)
+                </span>
+                <input
+                  type="text"
+                  placeholder="e.g. Submitted by Class Representative"
+                  value={templateState.customFooter}
+                  onChange={e => setTemplateState(prev => ({ ...prev, customFooter: e.target.value }))}
+                  style={{ fontSize: '0.8rem', padding: '0.4rem 0.6rem', minHeight: '34px' }}
+                />
+              </div>
+
+              {/* Action Buttons */}
+              <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
+                <button
+                  type="button"
+                  className="btn primary"
+                  onClick={handleSaveTemplate}
+                  style={{ flex: 2, fontSize: '0.85rem' }}
+                >
+                  Save Template Settings
+                </button>
+                <button
+                  type="button"
+                  className="btn secondary"
+                  onClick={handleResetTemplate}
+                  style={{ flex: 1, fontSize: '0.8rem' }}
+                  title="Reset to default clean WhatsApp format"
+                >
+                  Reset to Default
+                </button>
+              </div>
+
+            </div>
+          </div>
+        )}
 
         {/* Tab 1: AI Photo/PDF Smart Importer */}
         {activeTab === 'smart' && (

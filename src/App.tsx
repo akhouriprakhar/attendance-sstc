@@ -6,6 +6,8 @@ import { InitialSetup } from './components/InitialSetup';
 import { StudentModal } from './components/Modals/StudentModal';
 import { TimetableModal } from './components/Modals/TimetableModal';
 import { SettingsModal } from './components/Modals/SettingsModal';
+import { OffHoursModal } from './components/Modals/OffHoursModal';
+import { getCollegeHoursStatus } from './utils/collegeHours';
 import './index.css';
 
 const App: React.FC = () => {
@@ -34,7 +36,31 @@ const App: React.FC = () => {
   const [editIdx, setEditIdx] = useState(-1);
   const [isTimetableModalOpen, setIsTimetableModalOpen] = useState(false);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
-  const [selectedLectureRange, setSelectedLectureRange] = useState<{ start: string; end: string } | null>(null);
+  const [selectedLectureRange, setSelectedLectureRange] = useState<{ start: string; end: string; subject?: string } | null>(null);
+
+  // College Operating Hours & Off-Hours Overlay
+  const [collegeHours, setCollegeHours] = useState(() => getCollegeHoursStatus());
+  const [isOffHoursDismissed, setIsOffHoursDismissed] = useState<boolean>(() => {
+    try {
+      return sessionStorage.getItem('trace_dismiss_off_hours') === 'true';
+    } catch (e) {
+      return false;
+    }
+  });
+
+  useEffect(() => {
+    const updateHours = () => setCollegeHours(getCollegeHoursStatus());
+    updateHours();
+    const interval = setInterval(updateHours, 30000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const handleProceedFromOffHours = () => {
+    setIsOffHoursDismissed(true);
+    try {
+      sessionStorage.setItem('trace_dismiss_off_hours', 'true');
+    } catch (e) {}
+  };
 
   const handleOpenAddStudent = () => {
     setEditIdx(-1);
@@ -46,8 +72,8 @@ const App: React.FC = () => {
     setIsStudentModalOpen(true);
   };
 
-  const handleSelectLectureSlot = (startLec: string, endLec: string) => {
-    setSelectedLectureRange({ start: startLec, end: endLec });
+  const handleSelectLectureSlot = (startLec: string, endLec: string, subjectCode?: string) => {
+    setSelectedLectureRange({ start: startLec, end: endLec, subject: subjectCode });
   };
 
   const handleResetClass = () => {
@@ -100,39 +126,72 @@ const App: React.FC = () => {
   }, [handleKeyDown]);
 
   return (
-    <div id="app-container" className={`app-container ${editMode ? 'edit-mode' : ''}`}>
-      {students.length === 0 ? (
-        <InitialSetup
-          onCompleteSetup={(newStudents, newConfig) => {
-            importFullSetup(newStudents, newConfig);
-          }}
-          onOpenAddModal={handleOpenAddStudent}
-        />
-      ) : (
-        <>
-          {/* Left Panel: Live WhatsApp Report */}
-          <ReportPanel
-            students={students}
-            config={config}
-            onOpenSettings={() => setIsSettingsModalOpen(true)}
-            onCopySession={saveLastCopiedSession}
-            onRestoreLastSession={restoreLastCopiedSession}
-            selectedLectureRange={selectedLectureRange}
-          />
+    <div className={`app-wrapper ${editMode ? 'edit-mode' : ''}`}>
+      {/* Off-Hours Top Banner (Visible when overlay is dismissed outside operating hours) */}
+      {!collegeHours.isOpen && isOffHoursDismissed && students.length > 0 && (
+        <div className="off-hours-banner-wrapper">
+          <div className="off-hours-banner" title={collegeHours.subMessage}>
+            <div className="off-hours-left">
+              <span className="off-hours-pill">
+                {collegeHours.isSunday
+                  ? '🏖️ Sunday Off-Day'
+                  : collegeHours.isBeforeStart
+                  ? '🌅 Off-Hours (Starts 10:00 AM)'
+                  : '🌙 Off-Hours (Classes Ended)'}
+              </span>
+              <span className="off-hours-note">{collegeHours.scheduleText}</span>
+            </div>
+            <span className="off-hours-subnote">Operating: Mon–Fri (10:00 AM – 04:30 PM), Sat (10:00 AM – 02:00 PM)</span>
+          </div>
+        </div>
+      )}
 
-          {/* Right Panel: Student List */}
-          <StudentList
-            students={students}
-            editMode={editMode}
-            onToggleStudent={toggleStudent}
-            onToggleAll={toggleAll}
-            onToggleEditMode={() => setEditMode(!editMode)}
-            onOpenTimetable={() => setIsTimetableModalOpen(true)}
+      <div id="app-container" className="app-container">
+        {students.length === 0 ? (
+          <InitialSetup
+            onCompleteSetup={(newStudents, newConfig) => {
+              importFullSetup(newStudents, newConfig);
+            }}
             onOpenAddModal={handleOpenAddStudent}
-            onOpenEditModal={handleOpenEditStudent}
-            onDeleteStudent={deleteStudent}
           />
-        </>
+        ) : (
+          <div className="main-content-grid">
+            {/* Left Panel: Live WhatsApp Report (5 cols) */}
+            <div className="report-panel-container">
+              <ReportPanel
+                students={students}
+                config={config}
+                onOpenSettings={() => setIsSettingsModalOpen(true)}
+                onCopySession={saveLastCopiedSession}
+                onRestoreLastSession={restoreLastCopiedSession}
+                selectedLectureRange={selectedLectureRange}
+              />
+            </div>
+
+            {/* Right Panel: Student List (7 cols) */}
+            <div className="roster-panel-container">
+              <StudentList
+                students={students}
+                editMode={editMode}
+                onToggleStudent={toggleStudent}
+                onToggleAll={toggleAll}
+                onToggleEditMode={() => setEditMode(!editMode)}
+                onOpenTimetable={() => setIsTimetableModalOpen(true)}
+                onOpenAddModal={handleOpenAddStudent}
+                onOpenEditModal={handleOpenEditStudent}
+                onDeleteStudent={deleteStudent}
+              />
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Off-Hours Modal Overlay (Displays upon opening outside college hours unless dismissed) */}
+      {!collegeHours.isOpen && !isOffHoursDismissed && students.length > 0 && (
+        <OffHoursModal
+          status={collegeHours}
+          onProceed={handleProceedFromOffHours}
+        />
       )}
 
       {/* Modals */}
@@ -154,6 +213,7 @@ const App: React.FC = () => {
       <SettingsModal
         isOpen={isSettingsModalOpen}
         config={config}
+        students={students}
         onClose={() => setIsSettingsModalOpen(false)}
         onSaveConfig={setConfig}
         onSaveStudents={saveStudents}

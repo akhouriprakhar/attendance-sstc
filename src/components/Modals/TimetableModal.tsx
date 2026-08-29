@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { AppConfig } from '../../types';
-import { resolveSubjectDetails } from '../../utils/textFormatter';
+import { resolveSubjectDetails, normalizeSubjectName } from '../../utils/textFormatter';
+import { normalizeTimetableMap } from '../../utils/setupValidator';
 
 interface TimetableModalProps {
   isOpen: boolean;
@@ -10,11 +11,34 @@ interface TimetableModalProps {
 }
 
 const SUBJECT_COLORS: Record<string, { bg: string; border: string; text: string }> = {
+  "DS": { bg: "rgba(244, 63, 94, 0.12)", border: "rgba(244, 63, 94, 0.4)", text: "#f43f5e" },
+  "DS Lab": { bg: "rgba(244, 63, 94, 0.18)", border: "rgba(244, 63, 94, 0.6)", text: "#fb7185" },
+  "Blockchain": { bg: "rgba(168, 85, 247, 0.12)", border: "rgba(168, 85, 247, 0.4)", text: "#c084fc" },
+  "TOC": { bg: "rgba(245, 158, 11, 0.12)", border: "rgba(245, 158, 11, 0.4)", text: "#f59e0b" },
+  "TOC Lab": { bg: "rgba(245, 158, 11, 0.18)", border: "rgba(245, 158, 11, 0.6)", text: "#fbbf24" },
+  "CN": { bg: "rgba(6, 182, 212, 0.12)", border: "rgba(6, 182, 212, 0.4)", text: "#06b6d4" },
+  "CN Lab": { bg: "rgba(6, 182, 212, 0.18)", border: "rgba(6, 182, 212, 0.6)", text: "#22d3ee" },
+  "IoT": { bg: "rgba(16, 185, 129, 0.12)", border: "rgba(16, 185, 129, 0.4)", text: "#10b981" },
+  "IoT Lab": { bg: "rgba(16, 185, 129, 0.18)", border: "rgba(16, 185, 129, 0.6)", text: "#34d399" },
+  "Minor Project": { bg: "rgba(236, 72, 153, 0.12)", border: "rgba(236, 72, 153, 0.4)", text: "#f472b6" },
+  "Major Project": { bg: "rgba(236, 72, 153, 0.12)", border: "rgba(236, 72, 153, 0.4)", text: "#f472b6" },
   "CSA": { bg: "rgba(6, 182, 212, 0.12)", border: "rgba(6, 182, 212, 0.4)", text: "#06b6d4" },
   "DBMS": { bg: "rgba(16, 185, 129, 0.12)", border: "rgba(16, 185, 129, 0.4)", text: "#10b981" },
+  "DBMS Lab": { bg: "rgba(16, 185, 129, 0.18)", border: "rgba(16, 185, 129, 0.6)", text: "#34d399" },
   "ADA": { bg: "rgba(245, 158, 11, 0.12)", border: "rgba(245, 158, 11, 0.4)", text: "#f59e0b" },
+  "ADA Lab": { bg: "rgba(245, 158, 11, 0.18)", border: "rgba(245, 158, 11, 0.6)", text: "#fbbf24" },
+  "DAA": { bg: "rgba(245, 158, 11, 0.12)", border: "rgba(245, 158, 11, 0.4)", text: "#f59e0b" },
+  "OS": { bg: "rgba(59, 130, 246, 0.12)", border: "rgba(59, 130, 246, 0.4)", text: "#60a5fa" },
+  "OS Lab": { bg: "rgba(59, 130, 246, 0.18)", border: "rgba(59, 130, 246, 0.6)", text: "#93c5fd" },
+  "AI": { bg: "rgba(139, 92, 246, 0.12)", border: "rgba(139, 92, 246, 0.4)", text: "#a78bfa" },
+  "ML": { bg: "rgba(139, 92, 246, 0.12)", border: "rgba(139, 92, 246, 0.4)", text: "#a78bfa" },
   "JAVA": { bg: "rgba(99, 102, 241, 0.12)", border: "rgba(99, 102, 241, 0.4)", text: "#818cf8" },
-  "D.S.": { bg: "rgba(244, 63, 94, 0.12)", border: "rgba(244, 63, 94, 0.4)", text: "#f43f5e" }
+  "JAVA Lab": { bg: "rgba(99, 102, 241, 0.18)", border: "rgba(99, 102, 241, 0.6)", text: "#a5b4fc" },
+  "PYTHON": { bg: "rgba(34, 197, 94, 0.12)", border: "rgba(34, 197, 94, 0.4)", text: "#4ade80" },
+  "PYTHON Lab": { bg: "rgba(34, 197, 94, 0.18)", border: "rgba(34, 197, 94, 0.6)", text: "#86efac" },
+  "SE": { bg: "rgba(20, 184, 166, 0.12)", border: "rgba(20, 184, 166, 0.4)", text: "#2dd4bf" },
+  "WT": { bg: "rgba(251, 146, 60, 0.12)", border: "rgba(251, 146, 60, 0.4)", text: "#fb923c" },
+  "WT Lab": { bg: "rgba(251, 146, 60, 0.18)", border: "rgba(251, 146, 60, 0.6)", text: "#fdba74" }
 };
 
 const DEFAULT_COLOR = { bg: "rgba(255, 255, 255, 0.05)", border: "#333333", text: "#cccccc" };
@@ -41,7 +65,7 @@ export const TimetableModal: React.FC<TimetableModalProps> = ({
     return () => clearInterval(timer);
   }, [isOpen]);
 
-  const timetableMap = config?.timetable || {};
+  const timetableMap = useMemo(() => normalizeTimetableMap(config?.timetable), [config?.timetable]);
   const subjectsMap = config?.subjects || {};
 
   const currentHour = now.getHours();
@@ -52,10 +76,10 @@ export const TimetableModal: React.FC<TimetableModalProps> = ({
 
   const uniqueSubjectList = useMemo(() => {
     const map = new Map<string, { code: string; name: string }>();
-    Object.values(timetableMap).forEach(slots => {
-      slots.forEach(slot => {
-        const parts = slot.s.split(/[\/&,]+/).map(p => p.trim()).filter(Boolean);
-        parts.forEach(part => {
+    Object.values(timetableMap).forEach((slots: any[]) => {
+      (slots || []).forEach(slot => {
+        const parts = (slot.s || '').split(/[\/&,]+/).map((p: string) => p.trim()).filter(Boolean);
+        parts.forEach((part: string) => {
           const info = resolveSubjectDetails(part, subjectsMap);
           if (!map.has(part)) {
             map.set(part, { code: info.code, name: info.name });
@@ -124,23 +148,46 @@ export const TimetableModal: React.FC<TimetableModalProps> = ({
     }
   };
 
-  const handleSelectSlot = (slotIdx: number, slotTime: string, slotSubject: string) => {
+  const handleSelectSlot = (slotIdx: number, slotTime: string, slotSubject: string, day: string = activeDayTab) => {
     if (!onSelectLectureSlot) return;
     try {
+      const daySlots = timetableMap[day] || [];
+      const cleanSubject = normalizeSubjectName(slotSubject);
+      const isLab = cleanSubject.endsWith(' Lab') || cleanSubject.toLowerCase().includes('lab') || cleanSubject.toLowerCase().includes('project');
+
+      let startNum = `${slotIdx + 1}`;
+      let endNum = '';
+
+      // Check slot duration
+      let duration = 0;
       const [startStr, endStr] = slotTime.split('-');
-      let isMulti = false;
       if (startStr && endStr) {
         const [sH, sM] = startStr.split(':').map(Number);
         const [eH, eM] = endStr.split(':').map(Number);
-        const duration = (eH * 60 + eM) - (sH * 60 + sM);
-        isMulti = duration >= 75 || slotSubject.toLowerCase().includes('lab');
+        duration = (eH * 60 + eM) - (sH * 60 + sM);
       }
-      const startNum = `${slotIdx + 1}`;
-      const endNum = isMulti ? `${slotIdx + 2}` : '';
-      onSelectLectureSlot(startNum, endNum, slotSubject);
+
+      if (duration >= 75) {
+        startNum = `${slotIdx + 1}`;
+        endNum = `${slotIdx + 2}`;
+      } else if (isLab && daySlots.length > 0) {
+        // If previous slot is same lab, return range spanning full lab block
+        if (slotIdx > 0 && normalizeSubjectName(daySlots[slotIdx - 1]?.s || '').toLowerCase() === cleanSubject.toLowerCase()) {
+          startNum = `${slotIdx}`;
+          endNum = `${slotIdx + 1}`;
+        } else if (slotIdx < daySlots.length - 1 && normalizeSubjectName(daySlots[slotIdx + 1]?.s || '').toLowerCase() === cleanSubject.toLowerCase()) {
+          startNum = `${slotIdx + 1}`;
+          endNum = `${slotIdx + 2}`;
+        } else {
+          startNum = `${slotIdx + 1}`;
+          endNum = `${slotIdx + 2}`;
+        }
+      }
+
+      onSelectLectureSlot(startNum, endNum, cleanSubject);
       onClose();
     } catch (e) {
-      onSelectLectureSlot(`${slotIdx + 1}`, '', slotSubject);
+      onSelectLectureSlot(`${slotIdx + 1}`, '', normalizeSubjectName(slotSubject));
       onClose();
     }
   };
@@ -347,7 +394,7 @@ export const TimetableModal: React.FC<TimetableModalProps> = ({
                   .map(({ cls, slotIdx }) => {
                     const firstSubKey = cls.s.split(/[\/&,]+/)[0].trim();
                     const subInfo = resolveSubjectDetails(cls.s, subjectsMap);
-                    const palette = SUBJECT_COLORS[firstSubKey] || DEFAULT_COLOR;
+                    const palette = SUBJECT_COLORS[subInfo.name] || SUBJECT_COLORS[firstSubKey] || DEFAULT_COLOR;
                     const isNow = isClassNowActive(activeDayTab, cls.t);
 
                     return (
@@ -378,20 +425,6 @@ export const TimetableModal: React.FC<TimetableModalProps> = ({
                             }}>
                               {subInfo.name}
                             </span>
-                            {subInfo.code && subInfo.code !== subInfo.name && (
-                              <span style={{
-                                fontFamily: 'var(--font-mono)',
-                                fontSize: '0.75rem',
-                                fontWeight: 700,
-                                color: palette.text,
-                                background: 'rgba(0,0,0,0.4)',
-                                padding: '2px 6px',
-                                borderRadius: '4px',
-                                border: '1px solid ' + palette.border
-                              }}>
-                                {subInfo.code}
-                              </span>
-                            )}
                             {isNow && (
                               <span style={{
                                 fontSize: '0.65rem',
@@ -430,7 +463,7 @@ export const TimetableModal: React.FC<TimetableModalProps> = ({
                             type="button"
                             className="btn primary"
                             style={{ padding: '0.35rem 0.75rem', fontSize: '0.78rem', minHeight: '36px' }}
-                            onClick={() => handleSelectSlot(slotIdx, cls.t, cls.s)}
+                            onClick={() => handleSelectSlot(slotIdx, cls.t, cls.s, activeDayTab)}
                             title="Set this lecture as active in the report panel"
                           >
                             Select Lecture
@@ -491,13 +524,13 @@ export const TimetableModal: React.FC<TimetableModalProps> = ({
                               filteredSlots.map(({ cls, slotIdx }) => {
                                 const firstSubKey = cls.s.split(/[\/&,]+/)[0].trim();
                                 const subInfo = resolveSubjectDetails(cls.s, subjectsMap);
-                                const palette = SUBJECT_COLORS[firstSubKey] || DEFAULT_COLOR;
+                                const palette = SUBJECT_COLORS[subInfo.name] || SUBJECT_COLORS[firstSubKey] || DEFAULT_COLOR;
                                 const isNow = isClassNowActive(day, cls.t);
 
                                 return (
                                   <div
                                     key={slotIdx}
-                                    onClick={() => handleSelectSlot(slotIdx, cls.t, cls.s)}
+                                    onClick={() => handleSelectSlot(slotIdx, cls.t, cls.s, day)}
                                     style={{
                                       background: isNow ? 'rgba(48,209,88,0.18)' : palette.bg,
                                       color: palette.text,

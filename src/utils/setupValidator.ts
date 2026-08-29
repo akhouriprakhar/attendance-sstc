@@ -1,5 +1,6 @@
-import { Student, AppConfig } from '../types';
+import { Student, AppConfig, ScheduleSlot } from '../types';
 import { formatTitleCase } from '../hooks/useAttendance';
+import { normalizeSubjectName } from './textFormatter';
 
 export interface ValidationResult {
   success: boolean;
@@ -24,11 +25,20 @@ Please extract and format all the information into ONLY a valid JSON object matc
     { "roll": 2, "name": "Student Full Name" }
   ],
   "subjects": {
-    "SUB_CODE": { "name": "Subject Full Name", "faculty": "Teacher / Faculty Name" }
+    "DS": { "name": "Data Science", "faculty": "Teacher / Faculty Name" },
+    "DS Lab": { "name": "Data Science Lab", "faculty": "Teacher / Faculty Name" },
+    "Blockchain": { "name": "Blockchain", "faculty": "Teacher / Faculty Name" },
+    "TOC": { "name": "Theory of Computation", "faculty": "Teacher / Faculty Name" },
+    "CN": { "name": "Computer Networks", "faculty": "Teacher / Faculty Name" },
+    "CN Lab": { "name": "Computer Networks Lab", "faculty": "Teacher / Faculty Name" },
+    "IoT": { "name": "IoT", "faculty": "Teacher / Faculty Name" },
+    "IoT Lab": { "name": "IoT Lab", "faculty": "Teacher / Faculty Name" },
+    "Minor Project": { "name": "Minor Project", "faculty": "Teacher / Faculty Name" }
   },
   "timetable": {
     "Monday": [
-      { "t": "10:00-10:50", "s": "SUB_CODE" }
+      { "t": "10:00-10:50", "s": "DS" },
+      { "t": "10:50-11:40", "s": "TOC" }
     ],
     "Tuesday": [],
     "Wednesday": [],
@@ -42,11 +52,96 @@ Instructions:
 1. Extract all supplied students accurately. Preserve full names and exact spellings.
 2. If roll numbers are provided, preserve them. If not provided, assign sequential integer roll numbers starting from 1. Ensure roll numbers are unique.
 3. Extract class/section/semester name if provided.
-4. Extract subject codes, full subject names, and faculty names if provided.
-5. Extract the class timetable schedule with start-end times (format: "HH:MM-HH:MM") and subject codes.
+4. Use clean, standardized, readable Subject Names / Abbreviations (e.g. "DS", "Blockchain", "TOC", "CN", "IoT", "Minor Project") and distinctly identify practicals (e.g. "DS Lab", "IoT Lab", "CN Lab"). Strip elective prefixes like "Elective Subject 1 Blockchain" to purely "Blockchain".
+5. Extract the class timetable schedule with start-end times (format: "HH:MM-HH:MM") and the clean subject/lab names.
 6. If subjects or timetable are not provided, leave them as empty objects {} without inventing fake data.
 7. Do NOT invent missing student names or fake data.
 8. Return ONLY the raw JSON object with no conversational text, explanations, or surrounding markdown formatting.`;
+
+/**
+ * Normalizes a day's schedule slots, ensuring multi-period lab blocks (e.g. Periods 3 & 4 CN Lab)
+ * are uniformly labeled and designated as practical/lab slots across all consecutive periods.
+ */
+export const normalizeTimetableDaySlots = (rawSlots: ScheduleSlot[]): ScheduleSlot[] => {
+  if (!Array.isArray(rawSlots)) return [];
+
+  // 1. First pass: normalize subject names and check durations
+  const normalized = rawSlots
+    .filter(slot => slot && typeof slot === 'object' && typeof slot.t === 'string' && typeof slot.s === 'string')
+    .map(slot => {
+      const cleanSubject = normalizeSubjectName(slot.s.trim());
+      let finalSubject = cleanSubject;
+
+      try {
+        const [startStr, endStr] = slot.t.split('-');
+        if (startStr && endStr) {
+          const [sH, sM] = startStr.split(':').map(Number);
+          const [eH, eM] = endStr.split(':').map(Number);
+          const duration = (eH * 60 + eM) - (sH * 60 + sM);
+          if (duration >= 75) {
+            if (cleanSubject === 'CN') finalSubject = 'CN Lab';
+            else if (cleanSubject === 'IoT') finalSubject = 'IoT Lab';
+            else if (cleanSubject === 'DS') finalSubject = 'DS Lab';
+            else if (cleanSubject === 'DBMS') finalSubject = 'DBMS Lab';
+            else if (cleanSubject === 'OS') finalSubject = 'OS Lab';
+            else if (cleanSubject === 'JAVA') finalSubject = 'JAVA Lab';
+            else if (cleanSubject === 'PYTHON') finalSubject = 'PYTHON Lab';
+            else if (cleanSubject === 'WT') finalSubject = 'WT Lab';
+            else if (cleanSubject === 'ADA' || cleanSubject === 'DAA') finalSubject = 'ADA Lab';
+          }
+        }
+      } catch (e) {}
+
+      return {
+        t: slot.t.trim(),
+        s: finalSubject
+      };
+    });
+
+  // 2. Second pass: unify contiguous lab slots across consecutive periods
+  for (let i = 0; i < normalized.length; i++) {
+    const curr = normalized[i];
+    const isCurrLab = curr.s.endsWith(' Lab') || curr.s.includes('Project');
+
+    if (isCurrLab) {
+      const baseName = curr.s.replace(/\s+Lab$/i, '').trim();
+
+      // If previous slot shares base name (e.g. "CN" before "CN Lab"), make it "CN Lab"
+      if (i > 0) {
+        const prev = normalized[i - 1];
+        if (prev.s === baseName || prev.s.toLowerCase() === baseName.toLowerCase()) {
+          prev.s = curr.s;
+        }
+      }
+
+      // If next slot shares base name (e.g. "CN" after "CN Lab"), make it "CN Lab"
+      if (i < normalized.length - 1) {
+        const next = normalized[i + 1];
+        if (next.s === baseName || next.s.toLowerCase() === baseName.toLowerCase()) {
+          next.s = curr.s;
+        }
+      }
+    }
+  }
+
+  return normalized;
+};
+
+/**
+ * Normalizes full timetable map with proper Day casing (e.g. "Monday") and multi-period lab unification.
+ */
+export const normalizeTimetableMap = (rawMap?: Record<string, ScheduleSlot[]>): Record<string, ScheduleSlot[]> => {
+  if (!rawMap || typeof rawMap !== 'object') return {};
+  const standardDays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+  const result: Record<string, ScheduleSlot[]> = {};
+
+  Object.keys(rawMap).forEach(key => {
+    const matchedDay = standardDays.find(d => d.toLowerCase() === key.trim().toLowerCase()) || formatTitleCase(key.trim());
+    result[matchedDay] = normalizeTimetableDaySlots(rawMap[key] || []);
+  });
+
+  return result;
+};
 
 export const validateClassSetupJson = (rawInput: string): ValidationResult => {
   if (!rawInput || !rawInput.trim()) {
@@ -179,34 +274,26 @@ export const validateClassSetupJson = (rawInput: string): ValidationResult => {
   if (parsed.subjects && typeof parsed.subjects === 'object' && !Array.isArray(parsed.subjects)) {
     Object.keys(parsed.subjects).forEach(key => {
       const sub = parsed.subjects[key];
-      if (sub && typeof sub === 'object') {
-        subjects[key] = {
-          name: typeof sub.name === 'string' ? formatTitleCase(sub.name) : key,
-          faculty: typeof sub.faculty === 'string' ? formatTitleCase(sub.faculty) : '-'
-        };
-      } else if (typeof sub === 'string') {
-        subjects[key] = {
-          name: formatTitleCase(sub),
-          faculty: '-'
-        };
-      }
+      const rawName = sub && typeof sub === 'object' && typeof sub.name === 'string'
+        ? sub.name
+        : typeof sub === 'string'
+        ? sub
+        : key;
+      const rawFaculty = sub && typeof sub === 'object' && typeof sub.faculty === 'string'
+        ? sub.faculty
+        : '-';
+
+      const cleanKey = normalizeSubjectName(key);
+      const cleanName = normalizeSubjectName(rawName) || formatTitleCase(rawName);
+
+      subjects[cleanKey] = {
+        name: cleanName,
+        faculty: formatTitleCase(rawFaculty)
+      };
     });
   }
 
-  const timetable: Record<string, { t: string; s: string }[]> = {};
-  if (parsed.timetable && typeof parsed.timetable === 'object' && !Array.isArray(parsed.timetable)) {
-    Object.keys(parsed.timetable).forEach(day => {
-      const slots = parsed.timetable[day];
-      if (Array.isArray(slots)) {
-        timetable[day] = slots
-          .filter(slot => slot && typeof slot === 'object' && typeof slot.t === 'string' && typeof slot.s === 'string')
-          .map(slot => ({
-            t: slot.t.trim(),
-            s: slot.s.trim()
-          }));
-      }
-    });
-  }
+  const timetable = normalizeTimetableMap(parsed.timetable);
 
   const config: AppConfig = {
     semesterName,

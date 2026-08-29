@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Student, AppConfig, BackupData } from '../types';
+import { normalizeTimetableMap } from '../utils/setupValidator';
 
 const STORAGE_KEY_STUDENTS = 'trace_students_v4';
 const STORAGE_KEY_CONFIG = 'trace_config_v4';
@@ -67,7 +68,11 @@ export const useAttendance = () => {
       const savedConfig = localStorage.getItem(STORAGE_KEY_CONFIG);
       if (savedConfig) {
         try {
-          loadedConfig = JSON.parse(savedConfig);
+          const parsed = JSON.parse(savedConfig);
+          loadedConfig = {
+            ...parsed,
+            timetable: normalizeTimetableMap(parsed.timetable)
+          };
         } catch (e) {}
       }
       setConfigState(loadedConfig);
@@ -252,9 +257,10 @@ export const useAttendance = () => {
   }, [config, writeSnapshot]);
 
   const importTimetableOnly = useCallback((newTimetable: any) => {
+    const normalizedTimetable = normalizeTimetableMap(newTimetable);
     const updatedConfig = {
       ...config,
-      timetable: newTimetable
+      timetable: normalizedTimetable
     };
     setConfigState(updatedConfig);
     try {
@@ -300,10 +306,14 @@ export const useAttendance = () => {
   }, [config, students, writeSnapshot]);
 
   const setConfig = useCallback((newConfig: AppConfig) => {
-    setConfigState(newConfig);
+    const normalizedConfig: AppConfig = {
+      ...newConfig,
+      timetable: normalizeTimetableMap(newConfig.timetable)
+    };
+    setConfigState(normalizedConfig);
     try {
-      localStorage.setItem(STORAGE_KEY_CONFIG, JSON.stringify(newConfig));
-      writeSnapshot(students, newConfig);
+      localStorage.setItem(STORAGE_KEY_CONFIG, JSON.stringify(normalizedConfig));
+      writeSnapshot(students, normalizedConfig);
     } catch (e) {}
   }, [students, writeSnapshot]);
 
@@ -326,12 +336,16 @@ export const useAttendance = () => {
 
   const importFullSetup = useCallback((newStudents: Student[], newConfig: AppConfig) => {
     const sanitizedStudents = sanitizeStudents(newStudents);
+    const normalizedConfig: AppConfig = {
+      ...newConfig,
+      timetable: normalizeTimetableMap(newConfig.timetable)
+    };
     setStudents(sanitizedStudents);
-    setConfigState(newConfig);
+    setConfigState(normalizedConfig);
     try {
       localStorage.setItem(STORAGE_KEY_STUDENTS, JSON.stringify(sanitizedStudents));
-      localStorage.setItem(STORAGE_KEY_CONFIG, JSON.stringify(newConfig));
-      writeSnapshot(sanitizedStudents, newConfig);
+      localStorage.setItem(STORAGE_KEY_CONFIG, JSON.stringify(normalizedConfig));
+      writeSnapshot(sanitizedStudents, normalizedConfig);
     } catch (e) {}
   }, [writeSnapshot]);
 
